@@ -22,6 +22,10 @@ on:
         description: Repository prefix for pushed images. Defaults to ghcr.io/<owner>/<repo>.
         type: string
         default: ''
+      arm64-runner:
+        description: Runner for linux/arm64 builds. Set to ubuntu-24.04 to build under QEMU where arm64 runners are unavailable.
+        type: string
+        default: ubuntu-24.04-arm
     outputs:
       parameters:
         description: JSON object mapping Bicep parameter names to image digest references.
@@ -50,6 +54,7 @@ jobs:
           template: ${{ inputs.template }}
           registry: ${{ inputs.registry }}
           platforms: ${{ inputs.platforms }}
+          arm64-runner: ${{ inputs.arm64-runner }}
 
   build:
     name: Build ${{ matrix.name }} (${{ matrix.platform }})

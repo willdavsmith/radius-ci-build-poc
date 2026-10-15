@@ -64,7 +64,11 @@ runs:
             --dry-run=client -o yaml | kubectl apply -f -
           TARGET_FLAGS+=(--set global.targetCluster.enabled=true)
         fi
-        rad install kubernetes --set rp.publicEndpointOverride=localhost "${TARGET_FLAGS[@]}"
+        # The dashboard image is published for amd64 only and isn't needed in CI.
+        rad install kubernetes \
+          --set rp.publicEndpointOverride=localhost \
+          --set dashboard.enabled=false \
+          "${TARGET_FLAGS[@]}"
         kubectl wait --for=condition=Available deployment --all -n radius-system --timeout=300s
 
     - name: Create environment

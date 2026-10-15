@@ -73,7 +73,9 @@ matrix="$(jq -c \
           runner: (if $p == "linux/amd64" then $amd64
                    elif $p == "linux/arm64" then $arm64
                    else $amd64 end),
-          emulate: ($p != "linux/amd64" and $p != "linux/arm64")
+          emulate: (if $p == "linux/amd64" then false
+                    elif $p == "linux/arm64" then ($arm64 == $amd64)
+                    else true end)
         } ] }' <<<"$images")"
 
 echo "matrix=$matrix"
