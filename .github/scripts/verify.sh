@@ -30,9 +30,10 @@ while IFS=$'\t' read -r ns name image; do
 done < <(jq -r '.items[] | .metadata.namespace as $ns | .metadata.name as $n
   | .spec.template.spec.containers[] | [$ns, $n, .image] | @tsv' <<<"$deployments")
 
-read -r api_ns api_deploy < <(kubectl get deployment -A -l "radapp.io/resource=${API_RESOURCE}" \
-  -o jsonpath='{.items[0].metadata.namespace} {.items[0].metadata.name}')
-node="$(kubectl get pod -n "$api_ns" -l "radapp.io/resource=${API_RESOURCE}" -o jsonpath='{.items[0].spec.nodeName}')"
+api_selector="radapp.io/resource=${API_RESOURCE}"
+api_ns="$(kubectl get deployment -A -l "$api_selector" -o jsonpath='{.items[0].metadata.namespace}')"
+api_deploy="$(kubectl get deployment -A -l "$api_selector" -o jsonpath='{.items[0].metadata.name}')"
+node="$(kubectl get pod -n "$api_ns" -l "$api_selector" -o jsonpath='{.items[0].spec.nodeName}')"
 node_arch="$(kubectl get node "$node" -o jsonpath='{.metadata.labels.kubernetes\.io/arch}')"
 
 kubectl port-forward -n "$api_ns" "deployment/$api_deploy" 18080:8080 >/dev/null 2>&1 &
