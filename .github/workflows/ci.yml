@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build images
+    uses: ./.github/workflows/build-images.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      template: app.bicep
+
+  deploy-k3d:
+    name: Deploy to k3d (${{ matrix.arch }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      RADIUS_ENV: ci
+      APP_NAMESPACE: cibuild
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Radius control plane
+        uses: ./.github/actions/setup-radius
+        with:
+          environment: ${{ env.RADIUS_ENV }}
+          kubernetes-namespace: ${{ env.APP_NAMESPACE }}
+
+      - name: Deploy
+        env:
+          TEMPLATE: app.bicep
+          PARAMETERS: ${{ needs.build.outputs.parameters }}
+        run: |
+          kubectl create namespace "$APP_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          .github/scripts/deploy.sh
+
+      - name: Verify
+        env:
+          APP_NAME: cibuild-${{ env.RADIUS_ENV }}
+          API_RESOURCE: api-${{ env.RADIUS_ENV }}
+          PARAMETERS: ${{ needs.build.outputs.parameters }}
+        run: .github/scripts/verify.sh
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -50 || true
+          kubectl logs -n radius-system deployment/dynamic-rp --tail=200 || true
+          kubectl logs -n radius-system deployment/bicep-de --tail=100 || true
+
+  deploy-aks:
+    name: Deploy to AKS
+    needs: build
+    # OIDC is unavailable to pull requests from forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    environment: aks
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: aks-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    env:
+      RADIUS_ENV: ${{ github.event_name == 'pull_request' && format('pr{0}', github.event.pull_request.number) || 'main' }}
+      APP_NAMESPACE: ${{ github.event_name == 'pull_request' && format('cibuild-pr-{0}', github.event.pull_request.number) || 'cibuild-main' }}
+      TARGET_KUBECONFIG: ${{ github.workspace }}/../target-kubeconfig
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Azure login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        env:
+          AZURE_AKS_RESOURCE_GROUP: ${{ vars.AZURE_AKS_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
+          AZURE_AKS_CLUSTER_NAME: ${{ vars.AZURE_AKS_CLUSTER_NAME }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          az aks get-credentials \
+            --resource-group "$AZURE_AKS_RESOURCE_GROUP" \
+            --name "$AZURE_AKS_CLUSTER_NAME" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --file "$TARGET_KUBECONFIG"
+          kubectl --kubeconfig "$TARGET_KUBECONFIG" get nodes -o wide
+          kubectl --kubeconfig "$TARGET_KUBECONFIG" create namespace "$APP_NAMESPACE" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$TARGET_KUBECONFIG" apply -f -
+
+      - name: Set up Radius control plane
+        uses: ./.github/actions/setup-radius
+        with:
+          target-kubeconfig: ${{ env.TARGET_KUBECONFIG }}
+          environment: ${{ env.RADIUS_ENV }}
+          kubernetes-namespace: ${{ env.APP_NAMESPACE }}
+
+      - name: Deploy
+        env:
+          TEMPLATE: app.bicep
+          PARAMETERS: ${{ needs.build.outputs.parameters }}
+        run: .github/scripts/deploy.sh
+
+      - name: Verify on AKS
+        env:
+          KUBECONFIG: ${{ env.TARGET_KUBECONFIG }}
+          APP_NAME: cibuild-${{ env.RADIUS_ENV }}
+          API_RESOURCE: api-${{ env.RADIUS_ENV }}
+          PARAMETERS: ${{ needs.build.outputs.parameters }}
+        run: .github/scripts/verify.sh
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl logs -n radius-system deployment/dynamic-rp --tail=200 || true
+          kubectl logs -n radius-system deployment/bicep-de --tail=100 || true
+          kubectl --kubeconfig "$TARGET_KUBECONFIG" get all -n "$APP_NAMESPACE" || true
+          kubectl --kubeconfig "$TARGET_KUBECONFIG" get events -n "$APP_NAMESPACE" --sort-by=.lastTimestamp || true

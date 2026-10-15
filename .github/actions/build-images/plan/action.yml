@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-action.json
+---
+name: Radius - Plan image builds
+description: >-
+  Compile the application Bicep and turn each parameter annotated with
+  `@metadata({ radius: { build: { ... } } })` into build-matrix entries.
+
+inputs:
+  template:
+    description: Path to the application Bicep file.
+    required: true
+  registry:
+    description: Repository prefix for pushed images. Defaults to ghcr.io/<owner>/<repo>.
+    required: false
+    default: ''
+  platforms:
+    description: Comma-separated platforms used when an image's metadata sets none.
+    required: false
+    default: linux/amd64,linux/arm64
+  amd64-runner:
+    description: Runner label for native linux/amd64 builds.
+    required: false
+    default: ubuntu-24.04
+  arm64-runner:
+    description: Runner label for native linux/arm64 builds.
+    required: false
+    default: ubuntu-24.04-arm
+
+outputs:
+  matrix:
+    description: 'Build matrix JSON with one include entry per image and platform.'
+    value: ${{ steps.plan.outputs.matrix }}
+  images:
+    description: 'JSON array of images: param, name, repository, context, dockerfile, platforms.'
+    value: ${{ steps.plan.outputs.images }}
+  count:
+    description: Number of images to build.
+    value: ${{ steps.plan.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Bicep
+      shell: bash
+      env:
+        BICEP_VERSION: v0.42.1
+        BICEP_SHA256: aed90eb2c69a6ee2bd70dc0d4354408ac4d04fd9911d3ec8e0cd74ad173e7139
+      run: |
+        curl -sSL -o "$RUNNER_TEMP/bicep" \
+          "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
+        echo "${BICEP_SHA256}  $RUNNER_TEMP/bicep" | sha256sum -c -
+        chmod +x "$RUNNER_TEMP/bicep"
+
+    - name: Compile template
+      shell: bash
+      env:
+        TEMPLATE: ${{ inputs.template }}
+      run: |
+        "$RUNNER_TEMP/bicep" build "$TEMPLATE" --outfile "$RUNNER_TEMP/radius-build-template.json"
+
+    - name: Plan builds
+      id: plan
+      shell: bash
+      env:
+        TEMPLATE_JSON: ${{ runner.temp }}/radius-build-template.json
+        REGISTRY: ${{ inputs.registry || format('ghcr.io/{0}', github.repository) }}
+        DEFAULT_PLATFORMS: ${{ inputs.platforms }}
+        AMD64_RUNNER: ${{ inputs.amd64-runner }}
+        ARM64_RUNNER: ${{ inputs.arm64-runner }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        "$GITHUB_ACTION_PATH/plan.sh" | tee -a "$GITHUB_OUTPUT"

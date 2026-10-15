@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-action.json
+---
+name: Radius - Merge image digests
+description: >-
+  Combine per-platform image digests into multi-arch manifest lists and emit
+  the digest references as Bicep parameters for `rad deploy`.
+
+inputs:
+  images:
+    description: The `images` output of the plan action.
+    required: true
+  digests-dir:
+    description: Directory containing <name>/<sha256 hex> files from the build jobs.
+    required: true
+  tags:
+    description: Space-separated tags applied to every manifest list.
+    required: true
+
+outputs:
+  parameters:
+    description: JSON object mapping each Bicep parameter to its image digest reference.
+    value: ${{ steps.merge.outputs.parameters }}
+  parameters-file:
+    description: ARM parameters file usable as `rad deploy -p @<file>`.
+    value: ${{ steps.merge.outputs.parameters-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Merge manifests
+      id: merge
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+        DIGESTS_DIR: ${{ inputs.digests-dir }}
+        TAGS: ${{ inputs.tags }}
+        PARAMS_FILE: ${{ runner.temp }}/radius-image-parameters.json
+      run: |
+        "$GITHUB_ACTION_PATH/merge.sh" | tee -a "$GITHUB_OUTPUT"
+        echo "parameters-file=$PARAMS_FILE" >> "$GITHUB_OUTPUT"

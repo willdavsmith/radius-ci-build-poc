@@ -1,0 +1,40 @@
+name: Clean up PR environment
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup-aks:
+    name: Delete PR namespace on AKS
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    environment: aks
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APP_NAMESPACE: cibuild-pr-${{ github.event.pull_request.number }}
+    steps:
+      - name: Azure login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete namespace
+        env:
+          AZURE_AKS_RESOURCE_GROUP: ${{ vars.AZURE_AKS_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
+          AZURE_AKS_CLUSTER_NAME: ${{ vars.AZURE_AKS_CLUSTER_NAME }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          az aks get-credentials \
+            --resource-group "$AZURE_AKS_RESOURCE_GROUP" \
+            --name "$AZURE_AKS_CLUSTER_NAME" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --file "$RUNNER_TEMP/kubeconfig"
+          kubectl --kubeconfig "$RUNNER_TEMP/kubeconfig" delete namespace "$APP_NAMESPACE" --ignore-not-found --wait=false
