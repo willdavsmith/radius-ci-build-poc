@@ -79,5 +79,8 @@ runs:
           sleep 10
         done
         rad workspace create kubernetes default --group default --force
+        # rad env create validates that the namespace exists. With a target cluster
+        # the caller creates it there; it is created on the control plane either way.
+        kubectl create namespace "$KUBE_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
         rad env create "$ENV_NAME" --preview --kubernetes-namespace "$KUBE_NAMESPACE"
         rad env switch "$ENV_NAME" --preview

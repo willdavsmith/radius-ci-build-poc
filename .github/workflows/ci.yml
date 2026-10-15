@@ -54,9 +54,7 @@ jobs:
         env:
           TEMPLATE: app.bicep
           PARAMETERS: ${{ needs.build.outputs.parameters }}
-        run: |
-          kubectl create namespace "$APP_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-          .github/scripts/deploy.sh
+        run: .github/scripts/deploy.sh
 
       - name: Verify
         env:
